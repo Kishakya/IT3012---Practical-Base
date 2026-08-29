@@ -4,6 +4,8 @@ import math
 import heapq
 from collections import deque
 
+from logic_engine import KnowledgeBase
+
 
 class GreedyGridAgent:
     """A simple agent that tries to move around systematically to clear the grid."""
@@ -21,6 +23,10 @@ class SearchAgent:
     def __init__(self, active_algo='BFS'):
         self.plan = []
         self.active_algo = active_algo  # Options: 'BFS', 'DFS', 'UCS'
+
+        self.kb = KnowledgeBase()
+        self.kb.tell_rule(["TargetVisible", "HasDust"], "SafeToEngage")
+        self.kb.tell_rule(["SafeToEngage", "BloodseekerMissing"], "Retreat")
 
     def get_neighbors(self, state, grid_size, walls):
         x, y = state
@@ -95,8 +101,12 @@ class SearchAgent:
         x2, y2 = goal
         return math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
 
-    def astar_search(self, start_pos, goal_pos, walls, grid_size, heuristic_type='manhattan'):
+    def astar_search(self, start_pos, goal_pos, walls, grid_size, heuristic_type='manhattan',
+                      food_positions=None, opponent_positions=None):
         heuristic = self.manhattan_distance if heuristic_type == 'manhattan' else self.euclidean_distance
+
+        food_positions = set(food_positions) if food_positions else set()
+        opponent_positions = {tuple(pos) for pos in opponent_positions} if opponent_positions else set()
 
         counter = 0
         start_h = heuristic(start_pos, goal_pos)
@@ -115,6 +125,19 @@ class SearchAgent:
 
             for action, neighbor in self.get_neighbors(current_pos, grid_size, walls):
                 if neighbor not in reached_states:
+                    # Consult the Knowledge Base before treating this neighbor as feasible.
+                    self.kb.clear_facts()
+                    if neighbor in food_positions:
+                        self.kb.tell_fact("TargetVisible")
+                    else:
+                        self.kb.tell_fact("HasDust")
+                    if neighbor not in opponent_positions:
+                        self.kb.tell_fact("BloodseekerMissing")
+                    self.kb.forward_chain()
+
+                    if "Retreat" in self.kb.facts:
+                        continue  # Infeasible: skip this neighbor even though it's physically reachable.
+
                     g_new = g_cost + 1
                     h_new = heuristic(neighbor, goal_pos)
                     f_new = g_new + h_new
@@ -142,7 +165,10 @@ class SearchAgent:
             elif self.active_algo == 'UCS':
                 self.plan = self.ucs_search(start, target, grid_size, walls)
             elif self.active_algo == 'AStar':
-                self.plan = self.astar_search(start, target, walls, grid_size, heuristic_type='manhattan')
+                self.plan = self.astar_search(
+                    start, target, walls, grid_size, heuristic_type='manhattan',
+                    food_positions=all_food, opponent_positions=percept.get('opponent_positions', [])
+                )
 
         return self.plan.pop(0) if self.plan else 'STOP'
 
@@ -152,4 +178,3 @@ if __name__ == "__main__":
     start_pos, goal_pos = (0, 0), (3, 4)
     print(f"Manhattan distance {start_pos} -> {goal_pos}: {agent.manhattan_distance(start_pos, goal_pos)}")
     print(f"Euclidean distance {start_pos} -> {goal_pos}: {agent.euclidean_distance(start_pos, goal_pos)}")
-    
